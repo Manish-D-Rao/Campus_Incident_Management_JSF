@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Incident Detail - Campus Cyber Incident Management</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <script src="/js/api.js" defer></script>
+</head>
+<body>
+    <div class="header">
+        <div class="container">
+            <h1>Campus Cyber Incident Management</h1>
+            <div class="nav">
+                <a href="/dashboard.html">Dashboard</a>
+                <a href="#" id="logout-btn" class="btn btn-danger" style="padding:6px 12px">Logout</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <div id="alert"></div>
+        <div id="loading" style="text-align:center; padding:40px;">Loading incident...</div>
+
+        <div id="incident-card" class="card" style="display:none;">
+            <h2 id="incident-title">Incident #<span id="incident-id"></span></h2>
+            <div style="display:flex; gap:16px; margin-bottom:20px; flex-wrap:wrap;">
+                <span class="badge" id="badge-severity">Severity</span>
+                <span class="badge" id="badge-status">Status</span>
+                <span class="badge badge-neutral" id="badge-reported-by">Reported By</span>
+            </div>
+            <div class="form-group" style="margin-bottom:16px;">
+                <label>Description</label>
+                <div class="detail-value detail-description" id="incident-description"></div>
+            </div>
+            <div style="margin-bottom:16px;">
+                <label class="detail-label">Assigned To</label>
+                <div class="detail-value" id="incident-assigned-to">-</div>
+            </div>
+            <div style="margin-bottom:16px;">
+                <label class="detail-label">Reported At</label>
+                <div class="detail-value" id="incident-reported-at">-</div>
+            </div>
+
+            <!-- Officer: Update Status & Notes -->
+            <div id="officer-actions" class="card" style="margin-top:20px; display:none;">
+                <h2>Update Investigation</h2>
+                <div id="officer-alert"></div>
+                <div class="form-group">
+                    <label>Status</label>
+                    <select id="status-select">
+                        <option value="OPEN">Open</option>
+                        <option value="IN_PROGRESS">In Progress</option>
+                        <option value="RESOLVED">Resolved</option>
+                        <option value="CLOSED">Closed</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Resolution Notes</label>
+                    <textarea id="notes-textarea" rows="4" placeholder="Enter investigation details..."></textarea>
+                </div>
+                <button class="btn btn-primary" onclick="updateIncident()">Save Changes</button>
+            </div>
+
+            <!-- Admin: Update Status & Severity -->
+            <div id="admin-actions" class="card" style="margin-top:20px; display:none;">
+                <h2>Manage Incident</h2>
+                <div id="admin-alert"></div>
+                <div class="form-group">
+                    <label>Status</label>
+                    <select id="admin-status-select">
+                        <option value="OPEN">Open</option>
+                        <option value="IN_PROGRESS">In Progress</option>
+                        <option value="RESOLVED">Resolved</option>
+                        <option value="CLOSED">Closed</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Severity / Priority</label>
+                    <select id="admin-severity-select">
+                        <option value="LOW">Low</option>
+                        <option value="MEDIUM">Medium</option>
+                        <option value="HIGH">High</option>
+                        <option value="CRITICAL">Critical</option>
+                    </select>
+                </div>
+                <button class="btn btn-primary" onclick="updateStatusAdmin()">Update Status</button>
+                <button class="btn btn-primary" onclick="updateSeverityAdmin()" style="margin-left:8px">Update Severity</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    const token = localStorage.getItem('token');
+    if (!token) { window.location.href = '/login.html'; }
+
+    const user = JSON.parse(localStorage.getItem('user') || '{}');
+    const urlParams = new URLSearchParams(window.location.search);
+    const incidentId = urlParams.get('id');
+
+    document.getElementById('logout-btn')?.addEventListener('click', (e) => {
+        e.preventDefault();
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        window.location.href = '/login.html';
+    });
+
+    async function loadIncident() {
+        try {
+            const res = await apiRequest('/incidents/' + incidentId);
+            if (res.status !== 200 || !res.data) {
+                document.getElementById('loading').textContent = 'Incident not found.';
+                return;
+            }
+            const inc = res.data;
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('incident-card').style.display = 'block';
+
+            document.getElementById('incident-id').textContent = inc.id;
+            document.getElementById('incident-title').textContent = 'Incident #' + inc.id;
+            document.getElementById('incident-description').textContent = inc.description;
+            document.getElementById('badge-severity').textContent = inc.severity;
+            document.getElementById('badge-severity').className = 'badge badge-' + inc.severity.toLowerCase();
+            document.getElementById('badge-status').textContent = inc.status;
+            document.getElementById('badge-status').className = 'badge badge-' + inc.status.toLowerCase().replace(' ', '_');
+            document.getElementById('badge-reported-by').textContent = inc.reportedBy ? (inc.reportedBy.name || inc.reportedBy.email) : '-';
+            document.getElementById('incident-assigned-to').textContent = inc.assignedTo ? (inc.assignedTo.name || inc.assignedTo.email) : 'Not assigned';
+            document.getElementById('incident-reported-at').textContent = inc.reportedAt ? new Date(inc.reportedAt).toLocaleString() : '-';
+
+            document.getElementById('status-select').value = inc.status;
+            document.getElementById('admin-status-select').value = inc.status;
+            document.getElementById('admin-severity-select').value = inc.severity;
+            document.getElementById('notes-textarea').value = inc.resolutionNotes || '';
+
+            // Role-based actions
+            if (user.role === 'OFFICER') {
+                document.getElementById('officer-actions').style.display = 'block';
+            } else if (user.role === 'ADMIN') {
+                document.getElementById('admin-actions').style.display = 'block';
+            }
+        } catch (err) {
+            document.getElementById('loading').textContent = 'Unable to load incident. Please try again.';
+        }
+    }
+
+    async function updateIncident() {
+        const status = document.getElementById('status-select').value;
+        const notes = document.getElementById('notes-textarea').value;
+        const alertBox = document.getElementById('officer-alert');
+
+        try {
+            const res = await apiRequest('/incidents/' + incidentId + '/status', {
+                method: 'PUT',
+                body: JSON.stringify({ status })
+            });
+            if (res.status === 200) {
+                const res2 = await apiRequest('/incidents/' + incidentId + '/notes', {
+                    method: 'PUT',
+                    body: JSON.stringify({ notes })
+                });
+                if (res2.status === 200) {
+                    showAlert('officer-alert', 'Incident updated successfully.', 'success');
+                    setTimeout(() => { loadIncident(); }, 1000);
+                } else {
+                    showAlert('officer-alert', friendlyError(res2.status, res2.data ? res2.data.error : null), 'error');
+                }
+            } else {
+                showAlert('officer-alert', friendlyError(res.status, res.data ? res.data.error : null), 'error');
+            }
+        } catch (err) {
+            showAlert('officer-alert', 'Unable to connect. Please check your internet and try again.', 'error');
+        }
+    }
+
+    async function updateStatusAdmin() {
+        const status = document.getElementById('admin-status-select').value;
+        const alertBox = document.getElementById('admin-alert');
+        try {
+            const res = await apiRequest('/incidents/' + incidentId + '/status', {
+                method: 'PUT',
+                body: JSON.stringify({ status })
+            });
+            if (res.status === 200) {
+                showAlert('admin-alert', 'Status updated successfully.', 'success');
+                setTimeout(() => { loadIncident(); }, 1000);
+            } else {
+                showAlert('admin-alert', friendlyError(res.status, res.data ? res.data.error : null), 'error');
+            }
+        } catch (err) {
+            showAlert('admin-alert', 'Unable to connect. Please check your internet and try again.', 'error');
+        }
+    }
+
+    async function updateSeverityAdmin() {
+        const severity = document.getElementById('admin-severity-select').value;
+        const alertBox = document.getElementById('admin-alert');
+        try {
+            const res = await apiRequest('/incidents/' + incidentId + '/severity', {
+                method: 'PUT',
+                body: JSON.stringify({ severity })
+            });
+            if (res.status === 200) {
+                showAlert('admin-alert', 'Severity updated successfully.', 'success');
+                setTimeout(() => { loadIncident(); }, 1000);
+            } else {
+                showAlert('admin-alert', friendlyError(res.status, res.data ? res.data.error : null), 'error');
+            }
+        } catch (err) {
+            showAlert('admin-alert', 'Unable to connect. Please check your internet and try again.', 'error');
+        }
+    }
+
+    function escapeHtml(t){const d=document.createElement('div');d.textContent=t;return d.innerHTML;}
+    function showAlert(containerId, message, type) {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+        container.innerHTML = '<div class="alert alert-' + type + '">' + escapeHtml(message) + '</div>';
+        setTimeout(() => { container.innerHTML = ''; }, 5000);
+    }
+
+    // api.js is deferred in the head; load the incident after it is available.
+    document.addEventListener('DOMContentLoaded', loadIncident);
+    </script>
+</body>
+</html>

@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - Campus Cyber Incident Management</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <script src="/js/api.js" defer></script>
+</head>
+<body>
+    <div class="header">
+        <div class="container">
+            <h1>Campus Cyber Incident Management</h1>
+            <div class="nav">
+                <span class="user-info" id="user-info"></span>
+                <span class="role-badge" id="user-role"></span>
+                <a href="#" id="logout-btn" class="btn btn-danger" style="padding:6px 12px">Logout</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <div id="alert"></div>
+
+        <!-- Stats (Admin only) -->
+        <div id="stats-row" class="dashboard-grid" style="display:none;">
+            <div class="stat-card">
+                <h3>Total Incidents</h3>
+                <div class="value" id="stat-total">0</div>
+            </div>
+            <div class="stat-card">
+                <h3>Open</h3>
+                <div class="value" id="stat-open">0</div>
+            </div>
+            <div class="stat-card">
+                <h3>In Progress</h3>
+                <div class="value" id="stat-inprogress">0</div>
+            </div>
+            <div class="stat-card">
+                <h3>Resolved</h3>
+                <div class="value" id="stat-resolved">0</div>
+            </div>
+        </div>
+
+        <!-- Admin: Assign Incident -->
+        <div id="admin-assign-card" class="card" style="display:none;">
+            <h2>Assign Incident to Officer</h2>
+            <div id="assign-alert"></div>
+            <div class="form-group">
+                <label for="assign-incident-id">Incident</label>
+                <select id="assign-incident-id" required disabled>
+                    <option value="">Loading incidents...</option>
+                </select>
+                <div id="incident-pagination" style="display:none; align-items:center; justify-content:space-between; gap:12px; margin-top:10px;">
+                    <button type="button" id="incident-previous-page" class="btn btn-sm">Previous</button>
+                    <span id="incident-page-label" aria-live="polite"></span>
+                    <button type="button" id="incident-next-page" class="btn btn-sm">Next</button>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Officer User ID</label>
+                <select id="assign-officer-id" required>
+                    <option value="">Loading officers...</option>
+                </select>
+            </div>
+            <button class="btn btn-primary" onclick="assignIncident()">Assign</button>
+        </div>
+
+        <!-- Incident List -->
+        <div class="card">
+            <h2>My Incidents</h2>
+            <div id="incident-list-alert"></div>
+            <table class="table" id="incident-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Title</th>
+                        <th>Severity</th>
+                        <th>Status</th>
+                        <th>Assigned To</th>
+                        <th>Reported At</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody id="incident-table-body">
+                </tbody>
+            </table>
+            <div id="empty-state" class="empty-state" style="display:none;">No incidents found.</div>
+        </div>
+
+        <!-- Quick Report Button (Student/Staff) -->
+        <div id="quick-report" style="margin-top:16px; display:none;">
+            <a href="/report-incident.html" class="btn btn-primary">+ Report New Incident</a>
+        </div>
+    </div>
+
+    <script>
+    const token = localStorage.getItem('token');
+    if (!token) { window.location.href = '/login.html'; }
+
+    const user = JSON.parse(localStorage.getItem('user') || '{}');
+    const INCIDENTS_PER_PAGE = 10;
+    let assignableIncidents = [];
+    let incidentPage = 0;
+    document.getElementById('user-info').textContent = (user.name || user.email) + ' (' + user.email + ')';
+    document.getElementById('user-role').textContent = user.role || '';
+    document.getElementById('logout-btn')?.addEventListener('click', (e) => {
+        e.preventDefault();
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        window.location.href = '/login.html';
+    });
+
+    async function loadIncidents() {
+        const alert = document.getElementById('incident-list-alert');
+        const empty = document.getElementById('empty-state');
+        const tbody = document.getElementById('incident-table-body');
+        try {
+            const res = await apiRequest('/incidents');
+            if (res.status < 200 || res.status >= 300) {
+                const backendMessage = res.data && (res.data.error || res.data.message);
+                throw new Error(backendMessage || 'Request failed (HTTP ' + res.status + ').');
+            }
+            const incidents = res.status === 204 ? [] : res.data;
+            if (!Array.isArray(incidents)) {
+                throw new Error('Incident response was not a list');
+            }
+
+            if (user.role === 'ADMIN') {
+                assignableIncidents = incidents;
+                incidentPage = Math.min(
+                    incidentPage,
+                    Math.max(0, Math.ceil(incidents.length / INCIDENTS_PER_PAGE) - 1)
+                );
+                renderIncidentOptions();
+            }
+
+            alert.innerHTML = '';
+            tbody.innerHTML = '';
+            empty.style.display = 'none';
+
+            if (user.role === 'ADMIN') {
+                document.getElementById('stats-row').style.display = 'grid';
+                document.getElementById('stat-total').textContent = incidents.length;
+                document.getElementById('stat-open').textContent = incidents.filter(i => i.status === 'OPEN').length;
+                document.getElementById('stat-inprogress').textContent = incidents.filter(i => i.status === 'IN_PROGRESS').length;
+                document.getElementById('stat-resolved').textContent = incidents.filter(i => i.status === 'RESOLVED').length;
+            }
+
+            function renderIncidentOptions() {
+                const select = document.getElementById('assign-incident-id');
+                const pagination = document.getElementById('incident-pagination');
+                const pageLabel = document.getElementById('incident-page-label');
+                const previousButton = document.getElementById('incident-previous-page');
+                const nextButton = document.getElementById('incident-next-page');
+                const start = incidentPage * INCIDENTS_PER_PAGE;
+                const pageIncidents = assignableIncidents.slice(start, start + INCIDENTS_PER_PAGE);
+
+                select.innerHTML = '<option value="">Select an incident</option>';
+                pageIncidents.forEach(incident => {
+                    const option = document.createElement('option');
+                    option.value = incident.id;
+                    option.textContent = `#${incident.id} — ${incident.title} (${incident.status})`;
+                    select.appendChild(option);
+                });
+                select.disabled = pageIncidents.length === 0;
+
+                const pageCount = Math.ceil(assignableIncidents.length / INCIDENTS_PER_PAGE);
+                pagination.style.display = pageCount > 1 ? 'flex' : 'none';
+                pageLabel.textContent = assignableIncidents.length
+                    ? `Showing ${start + 1}-${start + pageIncidents.length} of ${assignableIncidents.length}`
+                    : '';
+                previousButton.disabled = incidentPage === 0;
+                nextButton.disabled = incidentPage >= pageCount - 1;
+            }
+
+            if (incidents.length === 0) {
+                empty.style.display = 'block';
+            } else {
+                empty.style.display = 'none';
+                incidents.forEach(inc => {
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td>#${inc.id}</td>
+                        <td>${escapeHtml(inc.title)}</td>
+                        <td><span class="badge ${getBadgeClass(inc.severity, '')}">${inc.severity}</span></td>
+                        <td><span class="badge ${getBadgeClass('', inc.status)}">${inc.status}</span></td>
+                        <td>${inc.assignedTo ? escapeHtml(inc.assignedTo.name || inc.assignedTo.email) : '-'}</td>
+                        <td>${formatDate(inc.reportedAt)}</td>
+                        <td><a href="/incident-detail.html?id=${inc.id}" class="btn btn-sm btn-primary">View</a></td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+
+            }
+        } catch (err) {
+            console.error('Unable to load incidents:', err);
+            empty.style.display = 'none';
+            tbody.innerHTML = '';
+            alert.innerHTML = '<div class="alert alert-error">Could not load incidents: ' + escapeHtml(err.message || 'Please try again.') + '</div>';
+        }
+    }
+
+    async function assignIncident() {
+        const incidentId = document.getElementById('assign-incident-id').value;
+        const officerId = document.getElementById('assign-officer-id').value;
+        const alertBox = document.getElementById('assign-alert');
+        if (!incidentId || !officerId) {
+            showAlert('assign-alert', 'Enter an incident ID and select an officer.', 'error');
+            return;
+        }
+        try {
+            const res = await apiRequest('/incidents/' + incidentId + '/assign', {
+                method: 'PUT',
+                body: JSON.stringify({ officerId: Number(officerId) })
+            });
+            if (res.status === 200) {
+                showAlert('assign-alert', 'Incident assigned successfully.', 'success');
+                loadIncidents();
+            } else {
+                const message = res.data && res.data.error
+                    ? res.data.error
+                    : friendlyError(res.status, null);
+                showAlert('assign-alert', message, 'error');
+            }
+        } catch (err) {
+            showAlert('assign-alert', err.message || 'Unable to connect. Please try again.', 'error');
+        }
+    }
+
+    async function loadOfficers() {
+        const select = document.getElementById('assign-officer-id');
+        try {
+            const res = await apiRequest('/incidents/officers');
+            if (res.status < 200 || res.status >= 300 || !Array.isArray(res.data)) {
+                const message = res.data && res.data.error
+                    ? res.data.error
+                    : friendlyError(res.status, null);
+                throw new Error(message);
+            }
+            select.innerHTML = '<option value="">Select an officer</option>';
+            res.data.forEach(officer => {
+                const option = document.createElement('option');
+                option.value = officer.id;
+                option.textContent = `${officer.name} (${officer.email}) — ID ${officer.id}`;
+                select.appendChild(option);
+            });
+            if (res.data.length === 0) {
+                select.innerHTML = '<option value="">No security officers registered</option>';
+                showAlert('assign-alert', 'Register a user with the Security Officer role before assigning incidents.', 'error');
+            }
+        } catch (err) {
+            select.innerHTML = '<option value="">Could not load officers</option>';
+            showAlert('assign-alert', err.message || 'Could not load security officers.', 'error');
+        }
+    }
+
+    function escapeHtml(t){const d=document.createElement('div');d.textContent=t;return d.innerHTML;}
+    function formatDate(s){if(!s)return'-';return new Date(s).toLocaleString();}
+    function getBadgeClass(sev, st){let s='badge-'+(sev||'').toLowerCase();let st2='badge-'+(st||'').toLowerCase().replace(' ','_');return s+' '+st2;}
+
+    // Role-based UI
+    if (user.role === 'ADMIN') {
+        document.getElementById('admin-assign-card').style.display = 'block';
+    } else if (user.role === 'OFFICER') {
+        // Officer sees assigned incidents only (handled by backend filtering)
+    } else {
+        document.getElementById('quick-report').style.display = 'block';
+    }
+
+    // api.js is deferred in the head; wait until it has loaded before fetching.
+    document.addEventListener('DOMContentLoaded', () => {
+        document.getElementById('incident-previous-page').addEventListener('click', () => {
+            if (incidentPage > 0) {
+                incidentPage--;
+                renderIncidentOptions();
+            }
+        });
+        document.getElementById('incident-next-page').addEventListener('click', () => {
+            if ((incidentPage + 1) * INCIDENTS_PER_PAGE < assignableIncidents.length) {
+                incidentPage++;
+                renderIncidentOptions();
+            }
+        });
+        loadIncidents();
+        if (user.role === 'ADMIN') {
+            loadOfficers();
+        }
+    });
+    </script>
+</body>
+</html>

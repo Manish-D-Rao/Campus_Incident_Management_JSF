@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Report Incident - Campus Cyber Incident Management</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <script src="/js/api.js" defer></script>
+</head>
+<body>
+    <div class="header">
+        <div class="container">
+            <h1>Campus Cyber Incident Management</h1>
+            <div class="nav">
+                <a href="/dashboard.html">Dashboard</a>
+                <a href="#" id="logout-btn" class="btn btn-danger" style="padding:6px 12px">Logout</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <div id="alert"></div>
+        <div class="card">
+            <h2>Report New Incident</h2>
+            <form id="report-form">
+                <div class="form-group">
+                    <label>Title</label>
+                    <input type="text" id="title" placeholder="Brief title of the incident" required>
+                </div>
+                <div class="form-group">
+                    <label>Description</label>
+                    <textarea id="description" rows="5" placeholder="Describe the incident in detail" required></textarea>
+                </div>
+                <button type="submit" class="btn btn-primary">Submit Report</button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+    const token = localStorage.getItem('token');
+    if (!token) { window.location.href = '/login.html'; }
+
+    document.getElementById('logout-btn')?.addEventListener('click', (e) => {
+        e.preventDefault();
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        window.location.href = '/login.html';
+    });
+
+    document.getElementById('report-form')?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const alertBox = document.getElementById('alert');
+        const payload = {
+            title: document.getElementById('title').value,
+            description: document.getElementById('description').value
+        };
+        try {
+            const res = await apiRequest('/incidents', {
+                method: 'POST',
+                body: JSON.stringify(payload)
+            });
+            if (res.status === 200) {
+                showAlert('alert', 'Incident reported successfully.', 'success');
+                setTimeout(() => { window.location.href = '/dashboard.html'; }, 1500);
+            } else {
+                showAlert('alert', friendlyError(res.status, res.data ? res.data.error : null), 'error');
+            }
+        } catch (err) {
+            showAlert('alert', 'Unable to connect. Please check your internet and try again.', 'error');
+        }
+    });
+
+    function escapeHtml(t){const d=document.createElement('div');d.textContent=t;return d.innerHTML;}
+    function showAlert(containerId, message, type) {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+        container.innerHTML = '<div class="alert alert-' + type + '">' + escapeHtml(message) + '</div>';
+        if (type !== 'error') {
+            setTimeout(() => { container.innerHTML = ''; }, 5000);
+        }
+    }
+    </script>
+</body>
+</html>
